@@ -9,25 +9,25 @@ import sys
 import unicodedata
 
 
-try:
-    from helpers import clean_unicode  # noqa: F401
-except ImportError:
-    def clean_unicode(s):
-        """Fix common mojibake, normalize Unicode, drop control/zero-width chars."""
-        if s is None:
-            return ""
-        s = str(s)
-        # Common UTF-8-read-as-Latin-1 artifacts
-        for bad, good in {"â€™": "'", "â€˜": "'", "â€œ": '"', "â€\x9d": '"',
-                          "â€“": "-", "â€”": "-", "Ã©": "é", "Â": ""}.items():
-            s = s.replace(bad, good)
-        s = unicodedata.normalize("NFKC", s)
-        s = s.replace("’", "'").replace("‘", "'")
-        s = s.replace("“", '"').replace("”", '"')
-        s = s.replace("–", "-").replace("—", "-")
-        s = "".join(ch for ch in s
-                    if unicodedata.category(ch)[0] != "C" or ch in " ")
-        return re.sub(r"\s+", " ", s).strip()
+def clean_unicode(s):
+    """Fix common mojibake, normalize Unicode, drop control/zero-width chars."""
+    if s is None:
+        return ""
+    s = str(s)
+    # Common UTF-8-read-as-Latin-1 artifacts
+    for bad, good in {"â€™": "'", "â€˜": "'", "â€œ": '"', "â€\x9d": '"',
+                      "â€“": "-", "â€”": "-", "Ã©": "é", "Â": ""}.items():
+        s = s.replace(bad, good)
+    s = unicodedata.normalize("NFKC", s)
+    s = s.replace("’", "'").replace("‘", "'")
+    s = s.replace("“", '"').replace("”", '"')
+    s = s.replace("–", "-").replace("—", "-")
+    # Turn tabs/newlines into spaces first, so words don't get glued together
+    s = re.sub(r"\s+", " ", s)
+    # Then drop invisible control characters (zero-width spaces, null bytes...)
+    s = "".join(ch for ch in s if unicodedata.category(ch)[0] != "C")
+    return s.strip()
+
 
 CARD_ID_RE = re.compile(r"^ID(\d{6})$")
 STREET_ABBR_UPPER = {"NE", "NW", "SE", "SW", "PO", "N", "S", "E", "W"}

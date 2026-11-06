@@ -5,7 +5,9 @@ Reads  : author_pairs.csv  (from Person 2: header "isbn13,author_name"; empty au
          books.csv         (from Person 1, optional but recommended: used to drop links to ISBNs
                             that are not in the final books table, so no orphan rows are written)
 Writes : authors.csv       ->  1,"John Grisham"        (author_id, name)
-         book_authors.csv  ->  9780440234746,1         (isbn, author_id; author_id empty = NULL)
+         book_authors.csv  ->  9780440234746,1         (isbn, author_id)
+         Books with no known author are NOT written to book_authors.csv (the composite primary key
+         (isbn, author_id) rejects a blank author_id). They stay in books.csv.
 Same style as the PDF example and Person 1's books.csv: no header row.
 
 Usage: python build_authors.py [author_pairs.csv] [books.csv] [out_dir]
@@ -19,7 +21,8 @@ def build_author_tables(pairs):
     """pairs: iterable of (isbn, author_name). Returns (authors, links).
 
     authors: [(author_id, name)]  - one row per unique name (case-insensitive)
-    links:   [(isbn, author_id)]  - one row per book/author pair; author_id "" = NULL
+    links:   [(isbn, author_id)]  - one row per book/author pair; author_id "" = book with no author
+             (main() leaves these out of book_authors.csv)
     """
     ids = {}        # casefolded name -> author_id
     authors = []    # (author_id, name); the first spelling seen is kept
@@ -91,16 +94,18 @@ def main():
 
     authors, links = build_author_tables(pairs)
     write_authors(os.path.join(out_dir, "authors.csv"), authors)
+    no_author = sorted(l[0] for l in links if l[1] == "")
+    links = [l for l in links if l[1] != ""]                # omit blank author_id rows
     write_links(os.path.join(out_dir, "book_authors.csv"), links)
 
     # Self-checks
     author_ids = {a[0] for a in authors}
-    assert all(l[1] == "" or l[1] in author_ids for l in links), "link points to missing author"
+    assert all(l[1] in author_ids for l in links), "link points to missing author"
     assert len(links) == len(set(links)), "duplicate link rows"
 
     print(f"authors.csv       : {len(authors)} authors")
-    print(f"book_authors.csv  : {len(links)} links for {len({l[0] for l in links})} books "
-          f"({sum(1 for l in links if l[1] == '')} with no author -> NULL)")
+    print(f"book_authors.csv  : {len(links)} links for {len({l[0] for l in links})} books")
+    print(f"Books with no known author (kept in books.csv, omitted from book_authors.csv): {len(no_author)}")
     if dropped:
         print(f"Dropped pairs for {len(dropped)} ISBN(s) not in books.csv: {sorted(dropped)[:10]}")
 

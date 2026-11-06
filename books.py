@@ -18,6 +18,9 @@ INPUT_FILE = "books-1.csv"
 OUTPUT_FILE = "books.csv"
 REJECTS_FILE = "books_rejected.log"
 
+# ---------------------------------------------------------------------------
+# Text cleaning (Person 5 can move these into a shared helpers module)
+# ---------------------------------------------------------------------------
 
 CHAR_REPLACEMENTS = {
     "\u2018": "'", "\u2019": "'", "\u201a": "'", "\u201b": "'",
@@ -27,23 +30,40 @@ CHAR_REPLACEMENTS = {
     "\u00a0": " ",
 }
 
+# Trailing parenthetical groups such as "(Amos Walker Series)", "(Signet)" or
+# "(Penguin Classics)" are series/imprint tags and get removed. Edition labels
+# such as "(Spanish Edition)" or "(2nd Edition)" are KEPT.
+# Allows one level of nesting, e.g. "(Everyman's Library (Cloth))".
+TRAILING_GROUP = re.compile(r"\s*([\(\[](?:[^()\[\]]|[\(\[][^()\[\]]*[\)\]])*[\)\]])\s*$")
 
-STRIP_ALL_TRAILING_PARENS = True
-
-if STRIP_ALL_TRAILING_PARENS:
-    SERIES_TAG = re.compile(
-        r"\s*[\(\[](?:[^()\[\]]|[\(\[][^()\[\]]*[\)\]])*[\)\]]\s*$"
-    )
-else:
-    SERIES_TAG = re.compile(
-        r"\s*[\(\[][^()\[\]]*\b(series|trilogy|saga|book\s*\d+|vol(ume|\.)?\s*\d+)\b[^()\[\]]*[\)\]]\s*$",
-        re.IGNORECASE,
-    )
+_LANGUAGES = (
+    r"spanish|french|german|italian|portuguese|dutch|finnish|swedish|norwegian|danish|"
+    r"russian|polish|czech|greek|latin|chinese|japanese|korean|arabic|hebrew|turkish|"
+    r"hungarian|romanian|catalan|bilingual|english|international|us|u\.s\.|uk|u\.k\."
+)
+_EDITION_MODIFIERS = (
+    r"\d+(?:st|nd|rd|th)(?:\s+anniversary)?|first|second|third|fourth|fifth|revised|"
+    r"expanded|updated|new|special|collector'?s|anniversary|abridged|unabridged|"
+    r"annotated|illustrated|large[\s-]print|deluxe|limited|library|school(?:\s*&\s*library)?|"
+    r"paperback|hardcover|trade|student|teacher'?s|critical|kindle|audio|movie\s+tie-in|"
+    r"turtleback(?:\s+school\s*&\s*library\s+binding)?|authorized(?:,\s*trade)?"
+)
+# A group is an edition label only if the WHOLE group matches, so series lines like
+# "Silhouette Special Edition" or "Dover Thrift Editions" do not match and are removed.
+EDITION_LABEL = re.compile(
+    r"^[\(\[]\s*(?:"
+    rf"(?:{_LANGUAGES})(?:\s+language)?\s+(?:edition|ed\.?|version)"
+    rf"|(?:{_EDITION_MODIFIERS})(?:\s+(?:{_EDITION_MODIFIERS}))*\s+(?:edition|ed\.?|version)"
+    r"|abridged|unabridged|revised|large print|bilingual"
+    r")\s*[\)\]]$",
+    re.IGNORECASE,
+)
 
 SMALL_WORDS = {
     "a", "an", "and", "as", "at", "but", "by", "for", "from", "in", "into",
     "nor", "of", "on", "or", "over", "the", "to", "up", "via", "with", "vs",
 }
+ACRONYMS = {"uk", "us", "usa", "tv", "dvd", "cd"}
 ROMAN_NUMERALS = {"ii", "iii", "iv", "vi", "vii", "viii", "ix", "xi", "xii"}
 
 
@@ -53,6 +73,7 @@ def clean_unicode(text):
         return ""
     text = str(text)
 
+    # Repair text that was UTF-8 but got decoded as cp1252 (e.g. "CafÃ©").
     if any(marker in text for marker in ("Ã", "Â", "â€")):
         try:
             text = text.encode("cp1252").decode("utf-8")
@@ -63,6 +84,7 @@ def clean_unicode(text):
     for bad, good in CHAR_REPLACEMENTS.items():
         text = text.replace(bad, good)
 
+    # Remove replacement chars and control characters.
     text = text.replace("\ufffd", "")
     text = "".join(ch for ch in text if unicodedata.category(ch)[0] != "C" or ch in "\t")
     return re.sub(r"\s+", " ", text).strip()
@@ -70,6 +92,8 @@ def clean_unicode(text):
 
 def _cap_first_letter(segment):
     for i, ch in enumerate(segment):
+        if ch.isdigit():  # "2nd", "25th": leave ordinals alone
+            return segment
         if ch.isalpha():
             return segment[:i] + ch.upper() + segment[i + 1:]
     return segment
@@ -88,11 +112,12 @@ def smart_title_case(text):
         bare = re.sub(r"[^a-z]", "", low)
         is_last = i == len(words) - 1
 
-        if bare in ROMAN_NUMERALS:
+        if bare in ROMAN_NUMERALS or bare in ACRONYMS:
             new = word.upper()
         elif bare in SMALL_WORDS and not force_cap and not is_last and word[:1] not in "([\"'":
             new = low
         else:
+            # Capitalize each hyphenated piece ("Self-Made" not "Self-made").
             new = "-".join(_cap_first_letter(p) for p in low.split("-"))
 
         out.append(new)
@@ -100,15 +125,27 @@ def smart_title_case(text):
     return " ".join(out)
 
 
-def clean_title(raw_title):
-    title = clean_unicode(raw_title)
+def strip_series_tags(title):
+    """Remove trailing (...) / [...] groups, but keep edition labels."""
+    kept = []
     while True:
-        stripped = SERIES_TAG.sub("", title).strip()
-        if stripped == title or not stripped:  
+        m = TRAILING_GROUP.search(title)
+        if not m or not title[:m.start()].strip():  # never strip a title down to nothing
             break
-        title = stripped
-    return smart_title_case(title)
+        group = m.group(1)
+        title = title[:m.start()].rstrip()
+        if EDITION_LABEL.match(group):
+            kept.insert(0, group)
+    return " ".join([title] + kept)
 
+
+def clean_title(raw_title):
+    return smart_title_case(strip_series_tags(clean_unicode(raw_title)))
+
+
+# ---------------------------------------------------------------------------
+# ISBN handling. ISBNs are ALWAYS strings so leading zeros and 'X' survive.
+# ---------------------------------------------------------------------------
 
 def isbn13_check_digit(first12):
     total = sum(int(d) * (1 if i % 2 == 0 else 3) for i, d in enumerate(first12))
@@ -126,7 +163,7 @@ def is_valid_isbn13(isbn13):
 def normalize_isbn10(raw):
     """Return a clean 10-char ISBN-10, or '' if it can't be trusted."""
     s = re.sub(r"[\s\-]", "", str(raw or "")).upper()
-    if len(s) == 9 and s.isdigit():  
+    if len(s) == 9 and s.isdigit():  # a leading zero was lost somewhere upstream
         s = s.zfill(10)
     if re.fullmatch(r"\d{9}[\dX]", s):
         return s
@@ -135,7 +172,7 @@ def normalize_isbn10(raw):
 
 def normalize_isbn13(raw):
     s = re.sub(r"[\s\-]", "", str(raw or ""))
-    if len(s) == 12 and s.isdigit():  
+    if len(s) == 12 and s.isdigit():  # leading zero lost (rare, 978/979 start anyway)
         s = s.zfill(13)
     return s if is_valid_isbn13(s) else ""
 
@@ -144,6 +181,10 @@ def isbn10_to_isbn13(isbn10):
     core = "978" + isbn10[:9]
     return core + isbn13_check_digit(core)
 
+
+# ---------------------------------------------------------------------------
+# Reading and processing
+# ---------------------------------------------------------------------------
 
 def read_rows(path):
     """Read the input file as strings. Works whether it is tab- or comma-separated."""
@@ -161,6 +202,7 @@ def read_rows(path):
     if "ISBN13" in header and "TITLE" in header:
         data = rows[1:]
     else:
+        # No header row: use the column order from the assignment.
         header = ["ISBN10", "ISBN13", "TITLE", "AUTHOR", "PUBLISHER", "PAGES"]
         data = rows
 
@@ -182,6 +224,7 @@ def build_books(rows):
         isbn10 = normalize_isbn10(row.get("ISBN10"))
         isbn13 = normalize_isbn13(row.get("ISBN13"))
 
+        # Missing or invalid ISBN-13: derive it from the ISBN-10.
         if not isbn13 and isbn10:
             isbn13 = isbn10_to_isbn13(isbn10)
             stats["computed_isbn13"] += 1
@@ -197,6 +240,7 @@ def build_books(rows):
             rejects.append(f"line {line_no}: empty title for ISBN {isbn13}")
             continue
 
+        # Duplicate ISBN: keep the first occurrence only (ISBN is the primary key).
         if isbn13 in seen:
             stats["duplicates"] += 1
             if seen[isbn13] != title:

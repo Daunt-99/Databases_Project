@@ -1,18 +1,26 @@
 #!/usr/bin/env python3
 """
 Usage:
-    python clean_borrowers.py [input.csv] [output.csv]
+    python clean_borrower.py [input.csv] [output.csv] [rejected.csv]
 """
 import csv
+import os
 import re
 import sys
 import unicodedata
+
+
+ROOT = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_INPUT = os.path.join(ROOT, "input", "borrowers.csv")
+DEFAULT_OUTPUT = os.path.join(ROOT, "output", "borrowers.csv")
 
 def clean_unicode(s):
     """Fix common mojibake, normalize Unicode, drop control/zero-width chars."""
     if s is None:
         return ""
     s = str(s)
+    if s.strip().lower() in {"nan", "none", "null"}:
+        return ""
     # Common UTF-8-read-as-Latin-1 artifacts
     for bad, good in {"â€™": "'", "â€˜": "'", "â€œ": '"', "â€\x9d": '"',
                       "â€“": "-", "â€”": "-", "Ã©": "é", "Â": ""}.items():
@@ -21,6 +29,7 @@ def clean_unicode(s):
     s = s.replace("’", "'").replace("‘", "'")
     s = s.replace("“", '"').replace("”", '"')
     s = s.replace("–", "-").replace("—", "-")
+    s = s.replace("\ufffd", "")
     # Turn tabs/newlines into spaces first, so words don't get glued together
     s = re.sub(r"\s+", " ", s)
     # Then drop invisible control characters (zero-width spaces, null bytes...)
@@ -95,7 +104,20 @@ def get(row, *names):
             return lowered[n.lower()] or ""
     return ""
 
-def clean_borrowers(in_path, out_path, reject_path="borrowers_rejected.csv"):
+def clean_borrowers(in_path, out_path, reject_path=None):
+    """Clean a borrower export and return ``(cleaned_rows, rejected_rows)``.
+
+    The normalized output has no header and follows the database table order:
+    Card_id, Ssn, Bname, Address, Phone. If no rejection path is supplied, a
+    ``borrowers_rejected.csv`` file is placed beside the normalized output when
+    rejected rows exist.
+    """
+    out_path = os.path.abspath(os.fspath(out_path))
+    if reject_path is None:
+        reject_path = os.path.join(os.path.dirname(out_path), "borrowers_rejected.csv")
+    else:
+        reject_path = os.path.abspath(os.fspath(reject_path))
+
     with open(in_path, newline="", encoding="utf-8-sig", errors="replace") as f:
         rows = list(csv.DictReader(f))
 
@@ -150,15 +172,16 @@ def clean_borrowers(in_path, out_path, reject_path="borrowers_rejected.csv"):
         })
 
     cleaned.sort(key=lambda x: x["Card_id"])
-    def q(value):
-        return '"' + value.replace('"', '""') + '"'
- 
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f, lineterminator="\n")
         for b in cleaned:
-            f.write(",".join([b["Card_id"], q(b["Ssn"]), q(b["Bname"]),
-                              q(b["Address"]), q(b["Phone"])]) + "\n")
+            writer.writerow([
+                b["Card_id"], b["Ssn"], b["Bname"], b["Address"], b["Phone"]
+            ])
 
     if rejected:
+        os.makedirs(os.path.dirname(reject_path), exist_ok=True)
         fields = ["line", "reason"] + [k for k in rejected[0] if k not in ("line", "reason")]
         with open(reject_path, "w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
@@ -172,6 +195,7 @@ def clean_borrowers(in_path, out_path, reject_path="borrowers_rejected.csv"):
     return cleaned, rejected
 
 if __name__ == "__main__":
-    src = sys.argv[1] if len(sys.argv) > 1 else "borrowers_raw.csv"
-    dst = sys.argv[2] if len(sys.argv) > 2 else "borrowers.csv"
-    clean_borrowers(src, dst)
+    src = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_INPUT
+    dst = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_OUTPUT
+    rejected = sys.argv[3] if len(sys.argv) > 3 else None
+    clean_borrowers(src, dst, rejected)

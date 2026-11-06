@@ -10,6 +10,8 @@ import re
 import sys
 import unicodedata
 
+from books import isbn10_to_isbn13, normalize_isbn10, normalize_isbn13, read_rows
+
 # Swap these for Person 5's shared helpers once they exist.
 try:
     from helpers import clean_unicode, title_case  # noqa: F401
@@ -26,8 +28,9 @@ except ImportError:
 
 GEN_SUFFIX = re.compile(r"^(jr|sr|ii|iii|iv)\.?\s+", re.I)
 GEN_ONLY = re.compile(r"^(jr|sr|ii|iii|iv)\.?$", re.I)
-CREDENTIAL = re.compile(r"^(ph\.?d|m\.?d|d\.?d|ed\.?d|esq)\.?\s*", re.I)
-CRED_ONLY = re.compile(r"^((ph\.?d|m\.?d|d\.?d|ed\.?d|esq)\.?\s*)+$", re.I)
+CREDENTIAL_TOKEN = r"(?:ph\.?d|m\.?d|d\.?d|ed\.?d|esq)\.?(?=\s|$)"
+CREDENTIAL = re.compile(rf"^{CREDENTIAL_TOKEN}\s*", re.I)
+CRED_ONLY = re.compile(rf"^(?:{CREDENTIAL_TOKEN}\s*)+$", re.I)
 
 
 def _strip_parens(s):
@@ -74,22 +77,28 @@ def parse_authors(raw):
 
 
 def main(src, dst):
-    n_books = n_pairs = n_none = 0
-    with open(src, encoding="utf-8", newline="") as f, \
-         open(dst, "w", encoding="utf-8", newline="") as g:
+    rows = read_rows(src)
+    n_pairs = n_none = n_no_isbn = 0
+    with open(dst, "w", encoding="utf-8", newline="") as g:
         w = csv.writer(g)
         w.writerow(["isbn13", "author_name"])
-        for row in csv.DictReader(f):
-            isbn = row["ISBN13"].strip()          # keep as text
-            authors = parse_authors(row["Author"])
-            n_books += 1
+        for _, row in rows:
+            isbn = normalize_isbn13(row.get("ISBN13"))
+            if not isbn:
+                isbn10 = normalize_isbn10(row.get("ISBN10"))
+                if isbn10:
+                    isbn = isbn10_to_isbn13(isbn10)
+            if not isbn:
+                n_no_isbn += 1
+                continue
+            authors = parse_authors(row.get("AUTHOR"))
             if not authors:
                 w.writerow([isbn, ""])            # NULL author
                 n_none += 1
             for a in authors:
                 w.writerow([isbn, a])
                 n_pairs += 1
-    print(f"books={n_books} pairs={n_pairs} no_author={n_none}")
+    print(f"books={len(rows)} pairs={n_pairs} no_author={n_none} no_isbn={n_no_isbn}")
 
 
 if __name__ == "__main__":

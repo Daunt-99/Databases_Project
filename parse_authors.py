@@ -31,6 +31,19 @@ GEN_ONLY = re.compile(r"^(jr|sr|ii|iii|iv)\.?$", re.I)
 CREDENTIAL_TOKEN = r"(?:ph\.?d|m\.?d|d\.?d|ed\.?d|esq)\.?(?=\s|$)"
 CREDENTIAL = re.compile(rf"^{CREDENTIAL_TOKEN}\s*", re.I)
 CRED_ONLY = re.compile(rf"^(?:{CREDENTIAL_TOKEN}\s*)+$", re.I)
+SURNAME = r"[^\W\d_]+(?:[-'’][^\W\d_]+)*"
+INITIAL = r"[^\W\d_]\."
+FRAGMENT_END = r"(?=\s*(?:[,;]|$))"
+CREDENTIAL_BEFORE_SURNAME = re.compile(
+    rf",\s*{CREDENTIAL_TOKEN}\s+({SURNAME}){FRAGMENT_END}", re.I
+)
+SURNAME_FIRST = re.compile(
+    rf"(?:^|(?<=[,;]))\s*({SURNAME})\s*,\s*((?:{INITIAL}\s*)+){FRAGMENT_END}"
+)
+# Keep the U.S. abbreviation in organization names.
+NAME_INITIALS = re.compile(
+    rf"(?<![\w.])(?!(?i:U\.S\.))(?:{INITIAL}\s*)+(?=[^\W\d_](?:[^\W\d_]|['’]))"
+)
 
 
 def _strip_parens(s):
@@ -42,6 +55,9 @@ def _strip_parens(s):
 def parse_authors(raw):
     """Return a clean, de-duplicated list of author names for one book."""
     raw = clean_unicode(raw or "")
+    # Repair comma formats such as "J. Patrick, Ph.D. Gannon" and "Cooper,J.F.".
+    raw = CREDENTIAL_BEFORE_SURNAME.sub(r" \1", raw)
+    raw = SURNAME_FIRST.sub(lambda match: f"{match[2].strip()} {match[1]}", raw)
     pieces = [p.strip() for p in re.split(r"[;,]", raw)]
     pieces = [p for p in pieces if p]
 
@@ -69,6 +85,10 @@ def parse_authors(raw):
         if not name:
             continue
         name = title_case(name)
+        name = NAME_INITIALS.sub(
+            lambda match: " ".join(re.findall(INITIAL, match[0].upper())) + " ",
+            name,
+        )
         key = name.casefold()
         if key not in seen:
             seen.add(key)

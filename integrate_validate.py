@@ -1,4 +1,4 @@
-"""Person 5: shared helpers, validation, pipeline integration, and packaging.
+"""shared helpers, validation, pipeline integration, and packaging.
 
 Run `python integrate_validate.py` from the project root to execute the complete pipeline.
 """

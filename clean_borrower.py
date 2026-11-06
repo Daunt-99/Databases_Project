@@ -8,7 +8,6 @@ import re
 import sys
 import unicodedata
 
-
 def clean_unicode(s):
     """Fix common mojibake, normalize Unicode, drop control/zero-width chars."""
     if s is None:
@@ -28,10 +27,8 @@ def clean_unicode(s):
     s = "".join(ch for ch in s if unicodedata.category(ch)[0] != "C")
     return s.strip()
 
-
 CARD_ID_RE = re.compile(r"^ID(\d{6})$")
 STREET_ABBR_UPPER = {"NE", "NW", "SE", "SW", "PO", "N", "S", "E", "W"}
-
 
 def name_case(s):
     """Title-case a person's name, keeping O'Brien / McDonald / Smith-Jones."""
@@ -54,7 +51,6 @@ def name_case(s):
         out.append("".join(fix_word(p) if p not in "-'" else p for p in parts))
     return " ".join(out)
 
-
 def address_case(s):
     """Title-case a street address; keep 1st/2nd, directions and unit codes sane."""
     s = clean_unicode(s).strip("'\"`,. ")
@@ -66,18 +62,16 @@ def address_case(s):
         elif re.match(r"^\d+(st|nd|rd|th)$", w, re.I):
             words.append(w.lower())          
         elif re.match(r"^\d+[A-Za-z]$", w):
-            words.append(w.upper())          #
+            words.append(w.upper())        
         else:
             words.append(w.capitalize())
     return " ".join(words)
-
 
 def clean_ssn(s):
     digits = re.sub(r"\D", "", clean_unicode(s))
     if len(digits) != 9:
         return None
     return f"{digits[:3]}-{digits[3:5]}-{digits[5:]}"
-
 
 def clean_phone(s):
     digits = re.sub(r"\D", "", clean_unicode(s))
@@ -87,13 +81,11 @@ def clean_phone(s):
         return ""
     return f"({digits[:3]}) {digits[3:6]}-{digits[6:]}"
 
-
 def build_address(street, city, state):
     street = address_case(street)
     city = name_case(city)
     state = re.sub(r"[^A-Za-z]", "", clean_unicode(state)).upper()
     return ", ".join(p for p in (street, city, state) if p)
-
 
 def get(row, *names):
     """Read a column by any of several header spellings (case-insensitive)."""
@@ -102,7 +94,6 @@ def get(row, *names):
         if n.lower() in lowered:
             return lowered[n.lower()] or ""
     return ""
-
 
 def clean_borrowers(in_path, out_path, reject_path="borrowers_rejected.csv"):
     with open(in_path, newline="", encoding="utf-8-sig", errors="replace") as f:
@@ -159,10 +150,13 @@ def clean_borrowers(in_path, out_path, reject_path="borrowers_rejected.csv"):
         })
 
     cleaned.sort(key=lambda x: x["Card_id"])
+    def q(value):
+        return '"' + value.replace('"', '""') + '"'
+ 
     with open(out_path, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=["Card_id", "Ssn", "Bname", "Address", "Phone"])
-        w.writeheader()
-        w.writerows(cleaned)
+        for b in cleaned:
+            f.write(",".join([b["Card_id"], q(b["Ssn"]), q(b["Bname"]),
+                              q(b["Address"]), q(b["Phone"])]) + "\n")
 
     if rejected:
         fields = ["line", "reason"] + [k for k in rejected[0] if k not in ("line", "reason")]
@@ -176,7 +170,6 @@ def clean_borrowers(in_path, out_path, reject_path="borrowers_rejected.csv"):
     print(f"  Card_ids reassigned: {reassigned}")
     print(f"  phones set to NULL (unparseable): {phone_nulled}")
     return cleaned, rejected
-
 
 if __name__ == "__main__":
     src = sys.argv[1] if len(sys.argv) > 1 else "borrowers_raw.csv"

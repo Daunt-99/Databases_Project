@@ -31,6 +31,7 @@ GEN_ONLY = re.compile(r"^(jr|sr|ii|iii|iv)\.?$", re.I)
 CREDENTIAL_TOKEN = r"(?:ph\.?d|m\.?d|d\.?d|ed\.?d|esq)\.?(?=\s|$)"
 CREDENTIAL = re.compile(rf"^{CREDENTIAL_TOKEN}\s*", re.I)
 CRED_ONLY = re.compile(rf"^(?:{CREDENTIAL_TOKEN}\s*)+$", re.I)
+TRAILING_CREDENTIALS = re.compile(rf"(?:\s+{CREDENTIAL_TOKEN})+$", re.I)
 SURNAME = r"[^\W\d_]+(?:[-'’][^\W\d_]+)*"
 INITIAL = r"[^\W\d_]\."
 FRAGMENT_END = r"(?=\s*(?:[,;]|$))"
@@ -82,6 +83,7 @@ def parse_authors(raw):
     for name in merged:
         name = _strip_parens(name)
         name = re.sub(r"\s+", " ", name).strip(" ;,").lstrip(".")
+        name = TRAILING_CREDENTIALS.sub("", name)
         if not name:
             continue
         name = title_case(name)

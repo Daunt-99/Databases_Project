@@ -1,14 +1,10 @@
 #!/usr/bin/env python3
-"""Person 3: build authors.csv and book_authors.csv.
+"""building authors.csv and book_authors.csv.
 
-Reads  : author_pairs.csv  (from Person 2: header "isbn13,author_name"; empty author_name = no author)
-         books.csv         (from Person 1, optional but recommended: used to drop links to ISBNs
-                            that are not in the final books table, so no orphan rows are written)
+Reads  : author_pairs.csv  
+         books.csv        
 Writes : authors.csv       ->  1,"John Grisham"        (author_id, name)
          book_authors.csv  ->  9780440234746,1         (isbn, author_id)
-         Books with no known author are NOT written to book_authors.csv (the composite primary key
-         (isbn, author_id) rejects a blank author_id). They stay in books.csv.
-Same style as the PDF example and Person 1's books.csv: no header row.
 
 Usage: python build_authors.py [author_pairs.csv] [books.csv] [out_dir]
 """

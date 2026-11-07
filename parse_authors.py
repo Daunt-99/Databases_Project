@@ -1,7 +1,7 @@
-"""Person 2: author parsing.
+"""
 
-Reads books-1.csv and produces (isbn13, author_name) pairs for Person 3.
-Books with no author are emitted as (isbn13, None) so Person 3 can write a NULL author_id.
+Reads books-1.csv and produces (isbn13, author_name) pairs.
+Books with no author are emitted as (isbn13, None).
 
 Usage: python parse_authors.py books-1.csv author_pairs.csv
 """

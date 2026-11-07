@@ -319,7 +319,6 @@ SERIES_SUFFIX = re.compile(r"\s*\([^)]*\)\s*$")
 SSN_RE = re.compile(r"^\d{3}-\d{2}-\d{4}$")
 PHONE_RE = re.compile(r"^\(\d{3}\) \d{3}-\d{4}$")
 CARD_ID_RE = re.compile(r"^ID\d{6}$")
-NULL_AUTHOR_IDS = {"", "NULL", r"\N"}
 
 
 class Report:
@@ -434,6 +433,19 @@ def _source_isbn_expectations(path):
         "duplicate_source_13": duplicate_source_13,
         "rows": len(rows),
     }
+
+
+def _source_isbns_with_author(path):
+    """ISBN-13s (same resolution as books.py) whose source Author cell is not blank."""
+    result = set()
+    for row in read_table(path):
+        lowered = {(k or "").strip().lower(): v for k, v in row.items()}
+        raw13 = normalize_isbn(lowered.get("isbn13", lowered.get("isbn-13", "")))
+        raw10 = normalize_isbn(lowered.get("isbn10", lowered.get("isbn-10", lowered.get("isbn", ""))))
+        isbn = raw13 if raw13 and isbn13_valid(raw13) else (isbn10_to_isbn13(raw10) if raw10 else "")
+        if isbn and clean_unicode(lowered.get("author", "")):
+            result.add(isbn)
+    return result
 
 
 def validate(out_dir="output", src_books=None, src_borrowers=None):
@@ -584,14 +596,14 @@ def validate(out_dir="output", src_books=None, src_borrowers=None):
             report.check(not malformed_isbns, "book_authors ISBNs are 13-digit text values",
                          f"{len(malformed_isbns)} book_authors ISBNs are not 13 digits", malformed_isbns)
 
+        # Every link that exists must carry a real, numeric author_id that is in
+        # authors.csv. A NULL/blank author_id is not allowed in a link row.
         invalid_author_values = [author_id for _, author_id in pairs
-                                 if author_id.strip().upper() not in NULL_AUTHOR_IDS
-                                 and not author_id.isdigit()]
-        report.check(not invalid_author_values, "author_id is numeric or NULL in every link",
-                     f"{len(invalid_author_values)} invalid author_id values in book_authors.csv",
+                                 if not author_id.isdigit()]
+        report.check(not invalid_author_values, "every link has a numeric author_id (no NULL or blank)",
+                     f"{len(invalid_author_values)} links have a NULL, blank or non-numeric author_id",
                      invalid_author_values)
-        used_author_ids = {author_id for _, author_id in pairs
-                           if author_id.strip().upper() not in NULL_AUTHOR_IDS}
+        used_author_ids = {author_id for _, author_id in pairs if author_id.isdigit()}
         if authors is not None:
             bad_references = sorted(used_author_ids - author_ids)
             report.check(not bad_references, "every author_id in book_authors exists in authors.csv",
@@ -601,17 +613,20 @@ def validate(out_dir="output", src_books=None, src_borrowers=None):
             if unused_ids:
                 report.warn(f"{len(unused_ids)} authors are not linked to any book", unused_ids)
 
+        # Books with no known author legitimately have zero links, so they are
+        # allowed. Report them, and warn if the source actually listed an author.
         if books is not None:
             linked_isbns = {isbn for isbn, _ in pairs}
             books_without_link = sorted(isbns - linked_isbns)
-            null_link_count = sum(1 for _, author_id in pairs
-                                  if author_id.strip().upper() in NULL_AUTHOR_IDS)
-            report.check(
-                not books_without_link,
-                f"every book appears in book_authors.csv ({null_link_count} NULL-author link(s))",
-                f"{len(books_without_link)} books have no book_authors.csv row",
-                books_without_link,
-            )
+            report.ok(f"{len(books_without_link)} book(s) have no known author and zero links (allowed)")
+            if src_books and os.path.isfile(src_books):
+                authored = _source_isbns_with_author(src_books)
+                lost = [isbn for isbn in books_without_link if isbn in authored]
+                if lost:
+                    report.warn(f"{len(lost)} book(s) have an author in the source but no link; "
+                                "check parse_authors.py", lost)
+                else:
+                    report.ok("every book with no links had a blank author in the source")
 
     # ---------------- borrowers ----------------
     if borrowers is not None:

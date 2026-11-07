@@ -86,11 +86,13 @@ def parse_authors(raw):
         name = TRAILING_CREDENTIALS.sub("", name)
         if not name:
             continue
-        name = title_case(name)
+        # Insert the missing space after initials ("W.Crain" -> "W. Crain") BEFORE
+        # casing, so the shared name_case() sees the finished tokens.
         name = NAME_INITIALS.sub(
             lambda match: " ".join(re.findall(INITIAL, match[0].upper())) + " ",
             name,
         )
+        name = title_case(name)
         key = name.casefold()
         if key not in seen:
             seen.add(key)

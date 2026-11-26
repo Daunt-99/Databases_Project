@@ -13,7 +13,8 @@ Rules implemented (from the Milestone 2 PDF)
     * Still out and late: fine = (today   - due_date) days * $0.25
     * Existing FINES row: paid = 0 -> update fine_amt only if it changed (never a second row)
                           paid = 1 -> do nothing
-    * Payment is refused while any fine belongs to a book that has not been returned.
+    * Payment is refused while the borrower has ANY book still out (team rule, see
+      REFUSE_PAYMENT_IF_ANY_BOOK_OUT), which also covers fines on unreturned books.
     * No partial payment: a successful payment marks ALL of the borrower's unpaid fines paid.
     * Listing is grouped by card_id with SUM(fine_amt) and hides paid fines by default.
 
@@ -40,10 +41,10 @@ from decimal import Decimal
 
 FINE_RATE_CENTS_PER_DAY = 25  # $0.25 per day
 
-# The PDF only forbids paying fines for books that are not yet returned. Set this to True
-# for the stricter reading "refuse if the borrower has ANY book still out", even an
-# on-time one with no fine.
-REFUSE_PAYMENT_IF_ANY_BOOK_OUT = False
+# Team rule: pay_fines() refuses while the borrower has ANY book checked out, even an
+# on-time one with no fine. (The PDF alone only forbids paying fines for books that are not
+# yet returned; set this to False to follow just that narrower rule.)
+REFUSE_PAYMENT_IF_ANY_BOOK_OUT = True
 
 PaymentResult = namedtuple("PaymentResult", ["success", "message", "amount"])
 
@@ -195,7 +196,8 @@ def pay_fines(card_id, today=None, conn=None):
     Refused (nothing is marked paid) when:
       * the card does not exist,
       * the borrower has nothing to pay,
-      * any unpaid fine belongs to a book that has not been returned yet.
+      * any unpaid fine belongs to a book that has not been returned yet,
+      * the borrower still has any book checked out (REFUSE_PAYMENT_IF_ANY_BOOK_OUT).
     """
     card_id = (card_id or "").strip()
     if not card_id:
@@ -265,14 +267,18 @@ def list_fines(include_paid=False, conn=None):
 
     One dict per (borrower, paid status):
       card_id, name, paid (bool), total (Decimal), fine_count, unreturned_count, payable (bool)
-    payable means the borrower could pay this row right now (unpaid and every fined book returned).
+    payable means the borrower could pay this row right now (unpaid, every fined book returned and,
+    under REFUSE_PAYMENT_IF_ANY_BOOK_OUT, no book of theirs still out). books_out is how many
+    books the borrower currently has checked out.
     By default paid fines are hidden; pass include_paid=True to show them too.
     Run refresh_fines() first if you want amounts for still-out books to be current.
     """
     sql = """
         SELECT l.card_id, b.bname, f.paid,
                SUM(f.fine_amt), COUNT(*),
-               SUM(CASE WHEN l.date_in IS NULL THEN 1 ELSE 0 END)
+               SUM(CASE WHEN l.date_in IS NULL THEN 1 ELSE 0 END),
+               (SELECT COUNT(*) FROM BOOK_LOANS o
+                WHERE o.card_id = l.card_id AND o.date_in IS NULL)
         FROM FINES f
         JOIN BOOK_LOANS l ON l.loan_id = f.loan_id
         LEFT JOIN BORROWER b ON b.card_id = l.card_id
@@ -292,9 +298,11 @@ def list_fines(include_paid=False, conn=None):
             "total": cents_to_decimal(total),
             "fine_count": count,
             "unreturned_count": unreturned,
-            "payable": (not paid) and unreturned == 0,
+            "books_out": books_out,
+            "payable": (not paid) and unreturned == 0
+            and not (REFUSE_PAYMENT_IF_ANY_BOOK_OUT and books_out),
         }
-        for card_id, name, paid, total, count, unreturned in rows
+        for card_id, name, paid, total, count, unreturned, books_out in rows
     ]
 
 

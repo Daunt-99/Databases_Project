@@ -135,21 +135,49 @@ class PaymentTests(unittest.TestCase):
         self.assertEqual(fine_row(self.c, returned)[1], 0)  # no partial payment
         self.assertEqual(fine_row(self.c, out)[1], 0)
 
-    def test_on_time_book_out_does_not_block_payment_by_default(self):
-        loan(self.c, "A", "ID000001", "2026-11-01", "2026-11-03")
-        loan(self.c, "B", "ID000001", "2026-11-30")  # still out, not late
+    def test_flag_is_on_by_default(self):
+        self.assertTrue(fines.REFUSE_PAYMENT_IF_ANY_BOOK_OUT)
+
+    def test_fine_on_returned_book_can_only_be_paid_after_other_book_is_returned(self):
+        fined = loan(self.c, "A", "ID000001", "2026-11-01", "2026-11-05")  # returned late: $1.00
+        other = loan(self.c, "B", "ID000001", "2026-11-30")                # still out, NOT late
+
+        # 1. Blocked while the on-time book is still out, and nothing is marked paid.
+        r = fines.pay_fines("ID000001", TODAY, self.c)
+        self.assertFalse(r.success)
+        self.assertIn("still has 1 book(s) checked out", r.message)
+        self.assertEqual(r.amount, Decimal("1.00"))  # shows what is owed
+        self.assertEqual(fine_row(self.c, fined), (100, 0))
+        self.assertTrue(fines.has_unpaid_fines("ID000001", TODAY, self.c))
+
+        # 2. Still blocked on a second attempt (nothing changed).
+        self.assertFalse(fines.pay_fines("ID000001", TODAY, self.c).success)
+
+        # 3. The borrower returns the other book (on time, so no new fine).
+        self.c.execute("UPDATE BOOK_LOANS SET date_in='2026-11-08' WHERE loan_id=?", (other,))
+        self.c.commit()
+
+        # 4. Now the payment goes through and clears the fine.
         r = fines.pay_fines("ID000001", TODAY, self.c)
         self.assertTrue(r.success, r.message)
+        self.assertEqual(r.amount, Decimal("1.00"))
+        self.assertEqual(fine_row(self.c, fined), (100, 1))
+        self.assertFalse(fines.has_unpaid_fines("ID000001", TODAY, self.c))
 
-    def test_strict_flag_refuses_when_any_book_out(self):
+    def test_other_borrowers_book_out_does_not_block(self):
+        loan(self.c, "A", "ID000001", "2026-11-01", "2026-11-05")
+        loan(self.c, "B", "ID000002", "2026-11-30")  # someone else has a book out
+        self.assertTrue(fines.pay_fines("ID000001", TODAY, self.c).success)
+
+    def test_flag_off_follows_the_narrower_pdf_rule(self):
         loan(self.c, "A", "ID000001", "2026-11-01", "2026-11-03")
-        loan(self.c, "B", "ID000001", "2026-11-30")
-        fines.REFUSE_PAYMENT_IF_ANY_BOOK_OUT = True
+        loan(self.c, "B", "ID000001", "2026-11-30")  # on time, still out
+        fines.REFUSE_PAYMENT_IF_ANY_BOOK_OUT = False
         try:
             r = fines.pay_fines("ID000001", TODAY, self.c)
         finally:
-            fines.REFUSE_PAYMENT_IF_ANY_BOOK_OUT = False
-        self.assertFalse(r.success)
+            fines.REFUSE_PAYMENT_IF_ANY_BOOK_OUT = True
+        self.assertTrue(r.success, r.message)
 
     def test_pay_uses_current_amount_without_a_prior_refresh(self):
         l = loan(self.c, "A", "ID000001", "2026-11-01", "2026-11-05")  # never refreshed
@@ -186,6 +214,12 @@ class ListTests(unittest.TestCase):
         self.assertEqual(rows[0]["name"], "Mark Morgan")
         self.assertTrue(rows[0]["payable"])
         self.assertFalse(rows[1]["payable"])  # fined book still out
+
+    def test_payable_is_false_while_any_book_is_out(self):
+        loan(self.c, "E", "ID000001", "2026-11-30")  # on-time book out for ID000001
+        rows = {r["card_id"]: r for r in fines.list_fines(conn=self.c)}
+        self.assertEqual(rows["ID000001"]["books_out"], 1)
+        self.assertFalse(rows["ID000001"]["payable"])
 
     def test_paid_hidden_by_default_and_shown_on_request(self):
         fines.pay_fines("ID000001", TODAY, self.c)

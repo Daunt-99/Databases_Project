@@ -40,6 +40,16 @@ class FindLoansTests(Base):
         self.assertEqual(len(find_loans(card_id="ID000002", conn=self.conn)), 1)
         self.assertEqual(len(find_loans(card_id="ID000002", active_only=False, conn=self.conn)), 2)
 
+    def test_name_match_is_unicode_aware(self):
+        self.conn.execute("INSERT INTO BORROWER VALUES ('ID000003','111-22-3333','Élodie Durand','3 C St',NULL)")
+        self.conn.execute("INSERT INTO BOOK_LOANS(isbn, card_id, date_out, due_date) "
+                          "VALUES ('0004','ID000003','2026-11-01','2026-11-15')")
+        for q in ("élodie", "ÉLODIE", "Élodie", "ELODIE".replace("E", "É", 1), "dur"):
+            self.assertEqual([r["card_id"] for r in find_loans(name=q, conn=self.conn)],
+                             ["ID000003"], q)
+        # decomposed (e + combining accent) input still matches
+        self.assertEqual(len(find_loans(name="e\u0301lodie", conn=self.conn)), 1)
+
     def test_wildcards_are_literal(self):
         self.assertEqual(find_loans(name="%", conn=self.conn), [])
 
@@ -68,6 +78,17 @@ class CheckinTests(Base):
             checkin([], conn=self.conn)
         with self.assertRaises(db.LibraryError):
             checkin([1, 2, 3, 4], conn=self.conn)
+
+    def test_bad_date_in_caller_transaction_changes_nothing(self):
+        # loan 1 out 2026-11-01, loan 3 out 2026-11-01; make loan 3 start later
+        self.conn.execute("UPDATE BOOK_LOANS SET date_out='2026-11-12', due_date='2026-11-26' WHERE loan_id=3")
+        self.conn.execute("BEGIN")
+        with self.assertRaises(db.LibraryError):
+            checkin([1, 3], today="2026-11-10", conn=self.conn)   # 2nd loan invalid
+        self.assertTrue(self.conn.in_transaction)                  # caller's txn untouched
+        self.assertIsNone(self.conn.execute(
+            "SELECT date_in FROM BOOK_LOANS WHERE loan_id=1").fetchone()[0])
+        self.conn.execute("ROLLBACK")
 
     def test_date_before_checkout_rejected(self):
         with self.assertRaises(db.LibraryError):

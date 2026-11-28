@@ -18,7 +18,7 @@ From the project root:
 
 Run the tests (each uses its own temporary database):
 
-    python -m unittest test_search test_fines test_checkin_borrowers
+    python -m unittest test_search test_fines test_checkin_borrowers test_end_to_end
 
 Try it from a Python prompt:
 
@@ -49,6 +49,7 @@ Set `LIBRARY_DB=path/to/file.db` to use a different database file, and
 - borrowers.py    - `create_borrower(name, ssn, address, phone)`
 - fines.py        - `refresh_fines`, `pay_fines`, `list_fines`, `has_unpaid_fines`
 - test_search.py, test_fines.py, test_checkin_borrowers.py - unit tests
+- test_end_to_end.py - final end-to-end run of all modules on the Milestone 1 data
 
 ## Milestone 2 rules and design decisions
 - **Search:** the text is split into words and every word must appear in the ISBN,
